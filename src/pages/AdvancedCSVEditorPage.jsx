@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import SEOHead from '../components/common/SEOHead';
 import EditableCSVTable from '../components/csv/EditableCSVTable';
 import CSVDataImporter from '../components/csv/CSVDataImporter';
@@ -7,8 +7,6 @@ import FindReplacePanel from '../components/csv/FindReplacePanel';
 import Button from '../components/common/Button';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-
-// Update the Advanced CSV Generation feature only. Please make sure all files are generated properly. allow users to select and edit with a single click, select the entire table by the top left '#' field and operations should work accordingly. Select, Replace, and find operations should highlight the field on the table. Use artifacts for response.
 
 const AdvancedCSVEditorPage = () => {
   // State for CSV data
@@ -19,36 +17,66 @@ const AdvancedCSVEditorPage = () => {
   const [fileName, setFileName] = useState('data.csv');
   const [hasChanges, setHasChanges] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
+  const [highlightedCell, setHighlightedCell] = useState(null);
   
   // Update change status when data or headers change
   useEffect(() => {
     setHasChanges(true);
   }, [data, headers]);
   
+  // Setup listener for highlighting cells from find/replace operations
+  useEffect(() => {
+    const handleHighlightCell = (event) => {
+      const { rowIndex, colIndex } = event.detail;
+      setHighlightedCell({ rowIndex, colIndex });
+    };
+    
+    document.addEventListener('highlightCell', handleHighlightCell);
+    
+    return () => {
+      document.removeEventListener('highlightCell', handleHighlightCell);
+    };
+  }, []);
+  
   // Handle data import
   const handleDataImport = (importedData) => {
     if (!importedData || !importedData.headers || !importedData.data) return;
     
+    // Ensure all rows have the same length
+    const normalizedData = importedData.data.map(row => {
+      // Create a row with all columns, filling with empty strings as needed
+      const normalizedRow = [];
+      for (let i = 0; i < importedData.headers.length; i++) {
+        normalizedRow[i] = row[i] !== undefined ? row[i] : '';
+      }
+      return normalizedRow;
+    });
+    
     setHeaders(importedData.headers);
-    setData(importedData.data);
+    setData(normalizedData);
     setSelectedCells([]);
     setHasChanges(false);
   };
   
   // Handle data change
-  const handleDataChange = (newData) => {
+  const handleDataChange = useCallback((newData) => {
     setData(newData);
-  };
+  }, []);
   
   // Handle header change
-  const handleHeaderChange = (newHeaders) => {
+  const handleHeaderChange = useCallback((newHeaders) => {
     setHeaders(newHeaders);
-  };
+  }, []);
   
   // Handle cell selection
-  const handleCellSelect = (cells) => {
+  const handleCellSelect = useCallback((cells) => {
     setSelectedCells(cells);
-  };
+    
+    // If a single cell is selected, also set it as the highlighted cell
+    if (cells.length === 1) {
+      setHighlightedCell(cells[0]);
+    }
+  }, []);
   
   // Handle export
   const handleExport = () => {
@@ -74,9 +102,19 @@ const AdvancedCSVEditorPage = () => {
   
   // Export as CSV
   const exportAsCSV = () => {
+    // Ensure the data has all required columns
+    const normalizedData = data.map(row => {
+      // Ensure row length matches headers
+      const normalizedRow = [];
+      for (let i = 0; i < headers.length; i++) {
+        normalizedRow[i] = row[i] !== undefined ? row[i] : '';
+      }
+      return normalizedRow;
+    });
+    
     const csvContent = Papa.unparse({
       fields: headers,
-      data: data
+      data: normalizedData
     });
     
     downloadFile(csvContent, fileName, 'text/csv');
@@ -84,7 +122,17 @@ const AdvancedCSVEditorPage = () => {
   
   // Export as Excel
   const exportAsExcel = () => {
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    // Ensure the data has all required columns
+    const normalizedData = data.map(row => {
+      // Create a row with all columns, filling with empty strings as needed
+      const normalizedRow = [];
+      for (let i = 0; i < headers.length; i++) {
+        normalizedRow[i] = row[i] !== undefined ? row[i] : '';
+      }
+      return normalizedRow;
+    });
+    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...normalizedData]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
     
@@ -171,19 +219,22 @@ const AdvancedCSVEditorPage = () => {
           </div>
           
           <div className="mt-4 md:mt-0 flex items-center space-x-2">
-            <input
-              type="text"
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              className="px-3 py-2 border border-border rounded"
-            />
-            <Button
-              variant="outline"
-              onClick={handleRenameFile}
-              size="sm"
-            >
-              Rename
-            </Button>
+            <div className="relative">
+              <input
+                type="text"
+                value={fileName}
+                onChange={(e) => setFileName(e.target.value)}
+                className="px-3 py-2 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              <Button
+                variant="outline"
+                onClick={handleRenameFile}
+                size="sm"
+                className="ml-2"
+              >
+                Rename
+              </Button>
+            </div>
           </div>
         </div>
         
@@ -204,7 +255,7 @@ const AdvancedCSVEditorPage = () => {
               <select
                 value={exportFormat}
                 onChange={(e) => setExportFormat(e.target.value)}
-                className="appearance-none pl-3 pr-8 py-2 border border-border rounded bg-white cursor-pointer"
+                className="appearance-none pl-3 pr-8 py-2 border border-border rounded bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
                 <option value="csv">CSV</option>
                 <option value="xlsx">Excel</option>
@@ -243,6 +294,7 @@ const AdvancedCSVEditorPage = () => {
               onHeaderChange={handleHeaderChange}
               selectedCells={selectedCells}
               onCellSelect={handleCellSelect}
+              highlightedCell={highlightedCell}
             />
           </div>
           
@@ -279,10 +331,10 @@ const AdvancedCSVEditorPage = () => {
             <li><strong>Ctrl/Cmd+V:</strong> Paste at selected cell</li>
             <li><strong>Delete:</strong> Clear selected cells</li>
             <li><strong>Tab:</strong> Move to next cell</li>
+            <li><strong>Arrow Keys:</strong> Navigate between cells</li>
             <li><strong>Shift+Click:</strong> Select range</li>
             <li><strong>Ctrl/Cmd+Click:</strong> Select multiple cells</li>
-            <li><strong>Double Click:</strong> Edit cell</li>
-            <li><strong>Enter:</strong> Finish editing</li>
+            <li><strong>Enter/Double Click:</strong> Edit cell</li>
           </ul>
         </div>
       </div>

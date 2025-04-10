@@ -264,6 +264,36 @@ const CSVOperationsToolbar = ({
     });
   };
   
+  // Highlight operations
+  const findText = () => {
+    if (selectedCells.length === 0) return;
+    
+    const searchText = prompt('Enter text to find:');
+    if (!searchText) return;
+    
+    const newSelection = [];
+    
+    // Search through all data
+    for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+      for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+        if (data[rowIndex] && data[rowIndex][colIndex] !== undefined) {
+          const cellValue = String(data[rowIndex][colIndex]).toLowerCase();
+          
+          if (cellValue.includes(searchText.toLowerCase())) {
+            newSelection.push({ rowIndex, colIndex });
+          }
+        }
+      }
+    }
+    
+    if (newSelection.length > 0) {
+      // Update selection to highlight found cells
+      onCellSelect(newSelection);
+    } else {
+      alert('No matches found');
+    }
+  };
+  
   // Show operation availability status
   const canOperateOnRows = selectedRows.length > 0;
   const canOperateOnColumns = selectedCols.length > 0;
@@ -417,15 +447,34 @@ const CSVOperationsToolbar = ({
           </div>
         </div>
         
-        {/* Individual operations */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={openFindReplace}
-        >
-          Find & Replace
-        </Button>
+        {/* Find operations */}
+        <div className="relative group">
+          <Button
+            variant="outline"
+            size="sm"
+          >
+            Find <span className="ml-1">▼</span>
+          </Button>
+          
+          <div className="absolute left-0 mt-1 w-48 bg-white border border-border rounded shadow-lg hidden group-hover:block z-10">
+            <ul className="py-1">
+              <li 
+                className="px-4 py-2 hover:bg-accent cursor-pointer text-sm flex items-center"
+                onClick={findText}
+              >
+                Find Text
+              </li>
+              <li 
+                className="px-4 py-2 hover:bg-accent cursor-pointer text-sm flex items-center"
+                onClick={openFindReplace}
+              >
+                Advanced Find & Replace
+              </li>
+            </ul>
+          </div>
+        </div>
         
+        {/* Individual operations */}
         <Button
           variant="outline"
           size="sm"

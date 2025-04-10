@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import Button from '../common/Button';
 
@@ -9,7 +9,8 @@ const EditableCSVTable = ({
   onHeaderChange,
   selectedCells = [],
   onCellSelect,
-  maxHeight = '600px'
+  maxHeight = '600px',
+  highlightedCell = null
 }) => {
   const [editingCell, setEditingCell] = useState(null);
   const [editingHeader, setEditingHeader] = useState(null);
@@ -18,10 +19,40 @@ const EditableCSVTable = ({
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   const [contextMenuTarget, setContextMenuTarget] = useState(null);
+  const [visibleRowsRange, setVisibleRowsRange] = useState({ start: 0, end: 100 });
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionStart, setSelectionStart] = useState(null);
+  const [lastSelectedCell, setLastSelectedCell] = useState(null);
   
   const tableRef = useRef(null);
+  const tableBodyRef = useRef(null);
   const inputRef = useRef(null);
   const headerInputRef = useRef(null);
+  const cellRefs = useRef({});
+  
+  const ROWS_BUFFER = 50; // Number of rows to render before/after visible area
+  const ROW_HEIGHT = 35; // Approximate height of each row in pixels
+  
+  // Calculate visible rows based on scroll position
+  const updateVisibleRows = useCallback(() => {
+    if (!tableBodyRef.current) return;
+    
+    const scrollTop = tableBodyRef.current.scrollTop;
+    const viewportHeight = tableBodyRef.current.clientHeight;
+    
+    const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROWS_BUFFER);
+    const endRow = Math.min(
+      data.length,
+      Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROWS_BUFFER
+    );
+    
+    setVisibleRowsRange({ start: startRow, end: endRow });
+  }, [data.length]);
+
+  // Debug function to log selection changes
+  useEffect(() => {
+    console.log("Selected cells updated:", selectedCells.length);
+  }, [selectedCells]);
   
   // Focus input when editing starts
   useEffect(() => {
@@ -36,7 +67,45 @@ const EditableCSVTable = ({
     }
   }, [editingHeader]);
   
-  // Handle click outside to cancel editing
+  // Setup scroll event listener for virtualization
+  useEffect(() => {
+    const tableBody = tableBodyRef.current;
+    if (tableBody) {
+      updateVisibleRows();
+      tableBody.addEventListener('scroll', updateVisibleRows);
+      return () => {
+        tableBody.removeEventListener('scroll', updateVisibleRows);
+      };
+    }
+  }, [updateVisibleRows]);
+  
+  // Focus on highlighted cell when it changes
+  useEffect(() => {
+    if (highlightedCell) {
+      const { rowIndex, colIndex } = highlightedCell;
+      const cellKey = `cell-${rowIndex}-${colIndex}`;
+      
+      // Scroll into view if needed
+      if (cellRefs.current[cellKey] && tableBodyRef.current) {
+        const cellElement = cellRefs.current[cellKey];
+        
+        // Calculate if cell is outside visible area
+        const cellRect = cellElement.getBoundingClientRect();
+        const tableRect = tableBodyRef.current.getBoundingClientRect();
+        
+        if (
+          cellRect.top < tableRect.top ||
+          cellRect.bottom > tableRect.bottom ||
+          cellRect.left < tableRect.left ||
+          cellRect.right > tableRect.right
+        ) {
+          cellElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+      }
+    }
+  }, [highlightedCell]);
+  
+  // Handle click outside to cancel editing and selection
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -52,16 +121,36 @@ const EditableCSVTable = ({
       }
     };
     
+    // Global mouseup listener to end selection
+    const handleMouseUp = () => {
+      if (isSelecting) {
+        setIsSelecting(false);
+      }
+    };
+    
+    // Prevent default selection behavior during table operations
+    const handleSelectStart = (e) => {
+      // Only prevent selection if we're in the table and not editing
+      if (isSelecting && !editingCell && !editingHeader) {
+        e.preventDefault();
+      }
+    };
+    
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('selectstart', handleSelectStart);
+    
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('selectstart', handleSelectStart);
     };
-  }, [editingCell, editingHeader, showContextMenu]);
+  }, [editingCell, editingHeader, showContextMenu, isSelecting]);
   
-  // Start editing a cell
+  // Start editing a cell on double click
   const startEditing = (rowIndex, colIndex) => {
     setEditingCell({ rowIndex, colIndex });
-    setCellValue(data[rowIndex][colIndex] || '');
+    setCellValue(data[rowIndex]?.[colIndex] || '');
   };
   
   // Start editing a header
@@ -77,7 +166,7 @@ const EditableCSVTable = ({
       const newData = [...data];
       
       if (!newData[rowIndex]) {
-        newData[rowIndex] = [];
+        newData[rowIndex] = new Array(headers.length).fill('');
       }
       
       newData[rowIndex][colIndex] = cellValue;
@@ -126,10 +215,62 @@ const EditableCSVTable = ({
     }
   };
   
-  // Handle cell selection
-  const handleCellClick = (rowIndex, colIndex, e) => {
+  // Navigate cells with arrow keys
+  const handleKeyDown = (e, rowIndex, colIndex) => {
+    if (editingCell) return; // Don't navigate while editing
+    
+    switch (e.key) {
+      case 'ArrowUp':
+        if (rowIndex > 0) {
+          e.preventDefault();
+          onCellSelect([{ rowIndex: rowIndex - 1, colIndex }]);
+        }
+        break;
+      case 'ArrowDown':
+        if (rowIndex < data.length - 1) {
+          e.preventDefault();
+          onCellSelect([{ rowIndex: rowIndex + 1, colIndex }]);
+        }
+        break;
+      case 'ArrowLeft':
+        if (colIndex > 0) {
+          e.preventDefault();
+          onCellSelect([{ rowIndex, colIndex: colIndex - 1 }]);
+        }
+        break;
+      case 'ArrowRight':
+        if (colIndex < headers.length - 1) {
+          e.preventDefault();
+          onCellSelect([{ rowIndex, colIndex: colIndex + 1 }]);
+        }
+        break;
+      case 'Enter':
+        e.preventDefault();
+        startEditing(rowIndex, colIndex);
+        break;
+      default:
+        break;
+    }
+  };
+  
+  // Check if a cell is currently selected
+  const isCellSelected = (rowIndex, colIndex) => {
+    return selectedCells.some(
+      cell => cell.rowIndex === rowIndex && cell.colIndex === colIndex
+    );
+  };
+  
+  // Start cell selection process on mouse down
+  const handleCellMouseDown = (rowIndex, colIndex, e) => {
+    // Prevent default selection behavior
+    e.preventDefault();
+    
+    // Don't handle right-clicks here
+    if (e.button === 2) return;
+    
+    // Handle selection based on modifiers
     if (e.ctrlKey || e.metaKey) {
-      // Add to selection with Ctrl/Cmd key
+      // Toggle individual cell with Ctrl/Cmd key
       const cellExists = selectedCells.some(
         cell => cell.rowIndex === rowIndex && cell.colIndex === colIndex
       );
@@ -145,13 +286,13 @@ const EditableCSVTable = ({
         // Add to selection
         onCellSelect([...selectedCells, { rowIndex, colIndex }]);
       }
-    } else if (e.shiftKey && selectedCells.length > 0) {
-      // Range selection with Shift key
-      const lastCell = selectedCells[selectedCells.length - 1];
-      const startRow = Math.min(lastCell.rowIndex, rowIndex);
-      const endRow = Math.max(lastCell.rowIndex, rowIndex);
-      const startCol = Math.min(lastCell.colIndex, colIndex);
-      const endCol = Math.max(lastCell.colIndex, colIndex);
+      setLastSelectedCell({ rowIndex, colIndex });
+    } else if (e.shiftKey && lastSelectedCell) {
+      // Range selection with Shift key from last selection to this cell
+      const startRow = Math.min(lastSelectedCell.rowIndex, rowIndex);
+      const endRow = Math.max(lastSelectedCell.rowIndex, rowIndex);
+      const startCol = Math.min(lastSelectedCell.colIndex, colIndex);
+      const endCol = Math.max(lastSelectedCell.colIndex, colIndex);
       
       const newSelection = [];
       for (let r = startRow; r <= endRow; r++) {
@@ -162,54 +303,119 @@ const EditableCSVTable = ({
       
       onCellSelect(newSelection);
     } else {
-      // Start editing on double click
-      if (e.detail === 2) {
-        startEditing(rowIndex, colIndex);
+      // Check if the cell is already selected and if it's a single selection
+      const cellExists = selectedCells.some(
+        cell => cell.rowIndex === rowIndex && cell.colIndex === colIndex
+      );
+      
+      // If this is an exact single cell selection, toggle it off when clicked again
+      if (cellExists && selectedCells.length === 1) {
+        onCellSelect([]);
+        setLastSelectedCell(null);
       } else {
-        // Single click selects a single cell
+        // Start a new selection
+        setIsSelecting(true);
+        setSelectionStart({ rowIndex, colIndex });
+        setLastSelectedCell({ rowIndex, colIndex });
         onCellSelect([{ rowIndex, colIndex }]);
       }
     }
   };
   
+  // Handle cell mouse enter during drag selection
+  const handleCellMouseEnter = (rowIndex, colIndex) => {
+    if (isSelecting && selectionStart) {
+      // Create a range selection from start to current
+      const startRow = Math.min(selectionStart.rowIndex, rowIndex);
+      const endRow = Math.max(selectionStart.rowIndex, rowIndex);
+      const startCol = Math.min(selectionStart.colIndex, colIndex);
+      const endCol = Math.max(selectionStart.colIndex, colIndex);
+      
+      const newSelection = [];
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          newSelection.push({ rowIndex: r, colIndex: c });
+        }
+      }
+      
+      onCellSelect(newSelection);
+      setLastSelectedCell({ rowIndex, colIndex });
+    }
+  };
+  
+  // Handle mouse up to end selection
+  const handleCellMouseUp = (rowIndex, colIndex) => {
+    if (isSelecting) {
+      setIsSelecting(false);
+      setSelectionStart(null);
+    }
+  };
+  
+  // Handle double click to edit
+  const handleCellDoubleClick = (rowIndex, colIndex) => {
+    startEditing(rowIndex, colIndex);
+  };
+  
   // Handle header click
   const handleHeaderClick = (index, e) => {
+    // Prevent default selection behavior
+    e.preventDefault();
+    
     if (e.detail === 2) {
       startEditingHeader(index);
     } else {
       // Select entire column
-      const columnCells = data.map((_, rowIndex) => ({
-        rowIndex,
-        colIndex: index
-      }));
+      const columnCells = [];
+      for (let r = 0; r < data.length; r++) {
+        columnCells.push({ rowIndex: r, colIndex: index });
+      }
       onCellSelect(columnCells);
+      setLastSelectedCell({ rowIndex: 0, colIndex: index });
     }
   };
   
   // Handle row selection by clicking row header
   const handleRowClick = (rowIndex, e) => {
+    // Prevent default selection behavior
+    e.preventDefault();
+    
     // Select entire row
-    const rowCells = headers.map((_, colIndex) => ({
-      rowIndex,
-      colIndex
-    }));
+    const rowCells = [];
+    for (let c = 0; c < headers.length; c++) {
+      rowCells.push({ rowIndex, colIndex: c });
+    }
     onCellSelect(rowCells);
+    setLastSelectedCell({ rowIndex, colIndex: 0 });
+  };
+  
+  // Handle select all table by clicking top-left '#' cell
+  const handleSelectAllClick = (e) => {
+    // Prevent default selection behavior
+    e.preventDefault();
+    
+    const allCells = [];
+    for (let rowIndex = 0; rowIndex < data.length; rowIndex++) {
+      for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+        allCells.push({ rowIndex, colIndex });
+      }
+    }
+    onCellSelect(allCells);
+    setLastSelectedCell({ rowIndex: 0, colIndex: 0 });
   };
   
   // Handle context menu
   const handleContextMenu = (e, rowIndex, colIndex) => {
     e.preventDefault();
     
-    // Only show context menu if cell is selected
-    if (
-      selectedCells.some(
-        cell => cell.rowIndex === rowIndex && cell.colIndex === colIndex
-      )
-    ) {
-      setContextMenuPosition({ x: e.clientX, y: e.clientY });
-      setContextMenuTarget({ rowIndex, colIndex });
-      setShowContextMenu(true);
+    // If right-clicking on an unselected cell, select it first
+    if (!isCellSelected(rowIndex, colIndex)) {
+      onCellSelect([{ rowIndex, colIndex }]);
+      setLastSelectedCell({ rowIndex, colIndex });
     }
+    
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuTarget({ rowIndex, colIndex });
+    setShowContextMenu(true);
   };
   
   // Context menu actions
@@ -263,6 +469,7 @@ const EditableCSVTable = ({
           rowValues.push('');
         }
       }
+      
       clipboardText += rowValues.join('\t') + '\n';
     }
     
@@ -295,18 +502,25 @@ const EditableCSVTable = ({
       // Create a copy of the current data
       const newData = [...data];
       
+      // Ensure all rows exist
+      while (newData.length < startRow + parsedRows.length) {
+        newData.push(new Array(headers.length).fill(''));
+      }
+      
       // Paste data starting from selected cell
       parsedRows.forEach((rowData, rowOffset) => {
         rowData.forEach((cellValue, colOffset) => {
           const targetRow = startRow + rowOffset;
           const targetCol = startCol + colOffset;
           
-          // Ensure row exists
-          if (!newData[targetRow]) {
-            newData[targetRow] = [];
-          }
+          // Skip if column is outside range
+          if (targetCol >= headers.length) return;
           
           // Insert value
+          if (!newData[targetRow]) {
+            newData[targetRow] = new Array(headers.length).fill('');
+          }
+          
           newData[targetRow][targetCol] = cellValue;
         });
       });
@@ -317,8 +531,10 @@ const EditableCSVTable = ({
       // Select the pasted region
       const pastedSelection = [];
       for (let r = startRow; r < startRow + parsedRows.length; r++) {
-        for (let c = startCol; c < startCol + parsedRows[0].length; c++) {
-          pastedSelection.push({ rowIndex: r, colIndex: c });
+        for (let c = startCol; c < startCol + (parsedRows[0]?.length || 0); c++) {
+          if (c < headers.length) {
+            pastedSelection.push({ rowIndex: r, colIndex: c });
+          }
         }
       }
       onCellSelect(pastedSelection);
@@ -335,7 +551,7 @@ const EditableCSVTable = ({
     const newData = [...data];
     
     selectedCells.forEach(({ rowIndex, colIndex }) => {
-      if (newData[rowIndex] && newData[rowIndex][colIndex] !== undefined) {
+      if (newData[rowIndex] && colIndex < headers.length) {
         newData[rowIndex][colIndex] = '';
       }
     });
@@ -370,6 +586,9 @@ const EditableCSVTable = ({
     const newRow = new Array(headers.length).fill('');
     newData.push(newRow);
     onDataChange(newData);
+    
+    // Update visible rows to include new row
+    updateVisibleRows();
   };
   
   // Add a new column
@@ -377,15 +596,26 @@ const EditableCSVTable = ({
     const newHeaders = [...headers, `Column ${headers.length + 1}`];
     onHeaderChange(newHeaders);
     
-    const newData = data.map(row => [...row, '']);
+    const newData = data.map(row => {
+      const newRow = [...row];
+      newRow.push('');
+      return newRow;
+    });
+    
     onDataChange(newData);
   };
   
-  // Check if a cell is currently selected
-  const isCellSelected = (rowIndex, colIndex) => {
-    return selectedCells.some(
-      cell => cell.rowIndex === rowIndex && cell.colIndex === colIndex
-    );
+  // Check if a cell is highlighted (for find/replace)
+  const isCellHighlighted = (rowIndex, colIndex) => {
+    return highlightedCell && 
+           highlightedCell.rowIndex === rowIndex && 
+           highlightedCell.colIndex === colIndex;
+  };
+  
+  // Set a cell reference
+  const setCellRef = (rowIndex, colIndex, ref) => {
+    const key = `cell-${rowIndex}-${colIndex}`;
+    cellRefs.current[key] = ref;
   };
   
   // Render cell content based on editing state
@@ -411,7 +641,7 @@ const EditableCSVTable = ({
     }
     
     return (
-      <div className="truncate px-2 py-1 h-full w-full">
+      <div className="truncate px-2 py-1 h-full w-full select-none">
         {data[rowIndex] && data[rowIndex][colIndex] !== undefined 
           ? data[rowIndex][colIndex] 
           : ''}
@@ -439,11 +669,69 @@ const EditableCSVTable = ({
     }
     
     return (
-      <div className="truncate font-semibold px-2 py-1">
+      <div className="truncate font-semibold px-2 py-1 select-none">
         {headers[index]}
       </div>
     );
   };
+  
+  // Render only the visible portion of the table for performance
+  const renderVisibleRows = () => {
+    const rows = [];
+    
+    for (let rowIndex = visibleRowsRange.start; rowIndex < visibleRowsRange.end && rowIndex < data.length; rowIndex++) {
+      rows.push(
+        <tr key={rowIndex} className="divide-x divide-border">
+          {/* Row header */}
+          <td 
+            className="w-12 px-2 py-1 whitespace-nowrap text-sm font-medium text-text-900 bg-accent/30 cursor-pointer hover:bg-accent-200 sticky left-0 z-10 select-none"
+            onClick={(e) => handleRowClick(rowIndex, e)}
+            onMouseDown={(e) => {
+              e.preventDefault(); // Prevent text selection
+              handleRowClick(rowIndex, e);
+            }}
+          >
+            {rowIndex + 1}
+          </td>
+          
+          {/* Row cells */}
+          {headers.map((_, colIndex) => {
+            const isSelected = isCellSelected(rowIndex, colIndex);
+            const isHighlighted = isCellHighlighted(rowIndex, colIndex);
+            
+            return (
+              <td
+                key={colIndex}
+                ref={(ref) => setCellRef(rowIndex, colIndex, ref)}
+                data-row-index={rowIndex}
+                data-col-index={colIndex}
+                className={`whitespace-nowrap text-sm text-text-900 border-r border-border relative min-w-[120px] cursor-cell ${
+                  isSelected ? 'bg-primary/10' : ''
+                } ${
+                  isHighlighted ? 'bg-secondary/20 outline outline-2 outline-secondary' : ''
+                }`}
+                onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
+                onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
+                onMouseUp={() => handleCellMouseUp(rowIndex, colIndex)}
+                onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
+                onContextMenu={(e) => handleContextMenu(e, rowIndex, colIndex)}
+                onKeyDown={(e) => handleKeyDown(e, rowIndex, colIndex)}
+                tabIndex="0"
+              >
+                {renderCell(rowIndex, colIndex)}
+              </td>
+            );
+          })}
+        </tr>
+      );
+    }
+    
+    return rows;
+  };
+  
+  // Calculate spacer heights
+  const topSpacerHeight = visibleRowsRange.start * ROW_HEIGHT;
+  const bottomSpacerHeight = Math.max(0, (data.length - visibleRowsRange.end) * ROW_HEIGHT);
   
   return (
     <div className="flex flex-col">
@@ -468,7 +756,7 @@ const EditableCSVTable = ({
         <div className="text-sm text-text-600">
           {selectedCells.length > 0 
             ? `${selectedCells.length} cell${selectedCells.length > 1 ? 's' : ''} selected` 
-            : 'Click to select cells. Double-click to edit.'}
+            : 'Click to select cell. Double-click to edit. Drag to select multiple cells.'}
         </div>
       </div>
       
@@ -477,54 +765,61 @@ const EditableCSVTable = ({
         style={{ maxHeight }}
         ref={tableRef}
       >
-        <table className="min-w-full divide-y divide-border">
-          <thead className="bg-accent">
-            <tr>
-              {/* Corner cell */}
-              <th className="w-12 px-2 py-2 text-left text-xs font-medium text-text-900 uppercase tracking-wider border-r border-border">
-                #
-              </th>
-              
-              {/* Column headers */}
-              {headers.map((header, index) => (
-                <th
-                  key={index}
-                  className="px-2 py-2 text-left text-xs font-medium text-text-900 uppercase tracking-wider border-r border-border min-w-[120px] cursor-pointer hover:bg-accent-200"
-                  onClick={(e) => handleHeaderClick(index, e)}
+        <div 
+          className="overflow-auto max-h-full"
+          ref={tableBodyRef}
+        >
+          <table className="min-w-full divide-y divide-border relative select-none">
+            <thead className="bg-accent sticky top-0 z-20">
+              <tr>
+                {/* Corner cell - select all */}
+                <th 
+                  className="w-12 px-2 py-2 text-left text-xs font-medium text-text-900 uppercase tracking-wider border-r border-border cursor-pointer hover:bg-accent-200 sticky left-0 z-30 select-none"
+                  onClick={(e) => handleSelectAllClick(e)}
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // Prevent text selection
+                    handleSelectAllClick(e);
+                  }}
                 >
-                  {renderHeader(index)}
+                  #
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-border">
-            {data.map((row, rowIndex) => (
-              <tr key={rowIndex} className="divide-x divide-border">
-                {/* Row header */}
-                <td 
-                  className="w-12 px-2 py-1 whitespace-nowrap text-sm font-medium text-text-900 bg-accent/30 cursor-pointer hover:bg-accent-200"
-                  onClick={(e) => handleRowClick(rowIndex, e)}
-                >
-                  {rowIndex + 1}
-                </td>
                 
-                {/* Row cells */}
-                {headers.map((_, colIndex) => (
-                  <td
-                    key={colIndex}
-                    className={`whitespace-nowrap text-sm text-text-900 border-r border-border relative min-w-[120px] cursor-pointer ${
-                      isCellSelected(rowIndex, colIndex) ? 'bg-primary/10' : ''
-                    }`}
-                    onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
-                    onContextMenu={(e) => handleContextMenu(e, rowIndex, colIndex)}
+                {/* Column headers */}
+                {headers.map((header, index) => (
+                  <th
+                    key={index}
+                    className="px-2 py-2 text-left text-xs font-medium text-text-900 uppercase tracking-wider border-r border-border min-w-[120px] cursor-pointer hover:bg-accent-200 select-none"
+                    onClick={(e) => handleHeaderClick(index, e)}
+                    onMouseDown={(e) => {
+                      e.preventDefault(); // Prevent text selection
+                      handleHeaderClick(index, e);
+                    }}
                   >
-                    {renderCell(rowIndex, colIndex)}
-                  </td>
+                    {renderHeader(index)}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-border">
+              {/* Top spacer for virtualization */}
+              {topSpacerHeight > 0 && (
+                <tr>
+                  <td colSpan={headers.length + 1} style={{ height: `${topSpacerHeight}px` }}></td>
+                </tr>
+              )}
+              
+              {/* Visible rows */}
+              {renderVisibleRows()}
+              
+              {/* Bottom spacer for virtualization */}
+              {bottomSpacerHeight > 0 && (
+                <tr>
+                  <td colSpan={headers.length + 1} style={{ height: `${bottomSpacerHeight}px` }}></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
       
       {/* Context Menu */}
@@ -587,7 +882,11 @@ EditableCSVTable.propTypes = {
     })
   ),
   onCellSelect: PropTypes.func.isRequired,
-  maxHeight: PropTypes.string
+  maxHeight: PropTypes.string,
+  highlightedCell: PropTypes.shape({
+    rowIndex: PropTypes.number.isRequired,
+    colIndex: PropTypes.number.isRequired
+  })
 };
 
 export default EditableCSVTable;

@@ -57,7 +57,8 @@ const FindReplacePanel = ({
         
         if (matchWholeCell) {
           // Match the entire cell content
-          return regex.test(cellText) && cellText.match(regex)[0] === cellText;
+          const matches = cellText.match(regex);
+          return matches !== null && matches[0] === cellText;
         } else {
           // Match part of the cell content
           return regex.test(cellText);
@@ -88,8 +89,10 @@ const FindReplacePanel = ({
         // All cells in the table
         const allCells = [];
         for (let r = 0; r < data.length; r++) {
-          for (let c = 0; c < headers.length; c++) {
-            allCells.push({ rowIndex: r, colIndex: c });
+          if (data[r]) {
+            for (let c = 0; c < headers.length; c++) {
+              allCells.push({ rowIndex: r, colIndex: c });
+            }
           }
         }
         return allCells;
@@ -109,7 +112,9 @@ const FindReplacePanel = ({
         
         for (const colIndex of uniqueColumns) {
           for (let r = 0; r < data.length; r++) {
-            columnCells.push({ rowIndex: r, colIndex });
+            if (data[r]) {
+              columnCells.push({ rowIndex: r, colIndex });
+            }
           }
         }
         
@@ -123,8 +128,10 @@ const FindReplacePanel = ({
         const rowCells = [];
         
         for (const rowIndex of uniqueRows) {
-          for (let c = 0; c < headers.length; c++) {
-            rowCells.push({ rowIndex, colIndex: c });
+          if (data[rowIndex]) {
+            for (let c = 0; c < headers.length; c++) {
+              rowCells.push({ rowIndex, colIndex: c });
+            }
           }
         }
         
@@ -149,8 +156,8 @@ const FindReplacePanel = ({
     for (const cell of cellsToSearch) {
       const { rowIndex, colIndex } = cell;
       
-      // Skip if row or cell doesn't exist
-      if (!data[rowIndex] || data[rowIndex][colIndex] === undefined) {
+      // Skip if row doesn't exist or column is out of range
+      if (!data[rowIndex] || colIndex >= headers.length) {
         continue;
       }
       
@@ -166,8 +173,10 @@ const FindReplacePanel = ({
     
     if (matches.length > 0) {
       setCurrentMatchIndex(0);
-      // Select the first match
-      onCellSelect([matches[0]]);
+      
+      // Highlight and select the first match
+      const firstMatch = matches[0];
+      highlightMatchAndNotify(firstMatch);
     } else {
       setCurrentMatchIndex(-1);
     }
@@ -183,12 +192,13 @@ const FindReplacePanel = ({
     if (currentMatchIndex >= 0 && currentMatchIndex < foundCells.length - 1) {
       const nextIndex = currentMatchIndex + 1;
       setCurrentMatchIndex(nextIndex);
-      // Select the next match
-      onCellSelect([foundCells[nextIndex]]);
+      
+      // Highlight and select the next match
+      highlightMatchAndNotify(foundCells[nextIndex]);
     } else {
       // Loop back to the first match
       setCurrentMatchIndex(0);
-      onCellSelect([foundCells[0]]);
+      highlightMatchAndNotify(foundCells[0]);
     }
   };
   
@@ -202,14 +212,29 @@ const FindReplacePanel = ({
     if (currentMatchIndex > 0) {
       const prevIndex = currentMatchIndex - 1;
       setCurrentMatchIndex(prevIndex);
-      // Select the previous match
-      onCellSelect([foundCells[prevIndex]]);
+      
+      // Highlight and select the previous match
+      highlightMatchAndNotify(foundCells[prevIndex]);
     } else {
       // Loop to the last match
       const lastIndex = foundCells.length - 1;
       setCurrentMatchIndex(lastIndex);
-      onCellSelect([foundCells[lastIndex]]);
+      highlightMatchAndNotify(foundCells[lastIndex]);
     }
+  };
+  
+  // Common function to highlight a match and notify parent components
+  const highlightMatchAndNotify = (cell) => {
+    // First select the cell
+    onCellSelect([cell]);
+    
+    // Then notify the table component to highlight and focus the cell
+    // This uses a custom event to communicate with the parent component
+    const event = new CustomEvent('highlightCell', { 
+      detail: { rowIndex: cell.rowIndex, colIndex: cell.colIndex }
+    });
+    
+    document.dispatchEvent(event);
   };
   
   // Replace current match
@@ -221,8 +246,8 @@ const FindReplacePanel = ({
     
     const { rowIndex, colIndex } = foundCells[currentMatchIndex];
     
-    // Skip if row or cell doesn't exist
-    if (!data[rowIndex] || data[rowIndex][colIndex] === undefined) {
+    // Skip if row doesn't exist or column is out of range
+    if (!data[rowIndex] || colIndex >= headers.length) {
       return;
     }
     
@@ -239,9 +264,14 @@ const FindReplacePanel = ({
         const flags = caseSensitive ? 'g' : 'gi';
         const regex = new RegExp(findValue, flags);
         
-        if (matchWholeCell && regex.test(cellValue) && cellValue.match(regex)[0] === cellValue) {
+        if (matchWholeCell) {
           // Replace whole cell if it matches completely
-          newValue = replaceValue;
+          const matches = cellValue.match(regex);
+          if (matches !== null && matches[0] === cellValue) {
+            newValue = replaceValue;
+          } else {
+            newValue = cellValue;
+          }
         } else {
           // Replace only matching parts
           newValue = cellValue.replace(regex, replaceValue);
@@ -256,30 +286,14 @@ const FindReplacePanel = ({
           (caseSensitive ? cellValue === findValue : cellValue.toLowerCase() === findValue.toLowerCase())) {
         // Replace whole cell if it matches completely
         newValue = replaceValue;
-      } else {
+      } else if (!matchWholeCell) {
         // Replace only matching parts
         const searchText = caseSensitive ? findValue : findValue.toLowerCase();
         
         if (caseSensitive) {
-          let pos = 0;
-          newValue = '';
-          
-          while (pos < cellValue.length) {
-            const index = cellValue.indexOf(findValue, pos);
-            
-            if (index === -1) {
-              // No more occurrences, add the rest of the string
-              newValue += cellValue.slice(pos);
-              break;
-            }
-            
-            // Add text before match and the replacement
-            newValue += cellValue.slice(pos, index) + replaceValue;
-            pos = index + findValue.length;
-          }
+          newValue = cellValue.split(findValue).join(replaceValue);
         } else {
-          // Case-insensitive replacement is more complex
-          // We need to preserve the case of the original string
+          // Case-insensitive replacement
           let result = '';
           let remainingText = cellValue;
           
@@ -303,18 +317,27 @@ const FindReplacePanel = ({
           
           newValue = result;
         }
+      } else {
+        newValue = cellValue;
       }
     }
     
     // Update the cell value
-    newData[rowIndex][colIndex] = newValue;
-    onDataChange(newData);
-    
-    // Update stats
-    setStats({ ...stats, replaced: stats.replaced + 1 });
+    if (newValue !== cellValue) {
+      newData[rowIndex][colIndex] = newValue;
+      onDataChange(newData);
+      
+      // Update stats
+      setStats({ ...stats, replaced: stats.replaced + 1 });
+    }
     
     // Move to next match
-    handleFindNext();
+    if (foundCells.length > 1) {
+      handleFindNext();
+    } else {
+      // If we just replaced the last/only match, search again
+      handleFind();
+    }
   };
   
   // Replace all matches
@@ -328,12 +351,13 @@ const FindReplacePanel = ({
     const cellsToSearch = getCellsToSearch();
     const newData = [...data];
     let replaceCount = 0;
+    const replacedCells = [];
     
     for (const cell of cellsToSearch) {
       const { rowIndex, colIndex } = cell;
       
-      // Skip if row or cell doesn't exist
-      if (!newData[rowIndex] || newData[rowIndex][colIndex] === undefined) {
+      // Skip if row doesn't exist or column is out of range
+      if (!newData[rowIndex] || colIndex >= headers.length) {
         continue;
       }
       
@@ -350,9 +374,14 @@ const FindReplacePanel = ({
             const flags = caseSensitive ? 'g' : 'gi';
             const regex = new RegExp(findValue, flags);
             
-            if (matchWholeCell && regex.test(cellValue) && cellValue.match(regex)[0] === cellValue) {
+            if (matchWholeCell) {
               // Replace whole cell if it matches completely
-              newValue = replaceValue;
+              const matches = cellValue.match(regex);
+              if (matches !== null && matches[0] === cellValue) {
+                newValue = replaceValue;
+              } else {
+                newValue = cellValue;
+              }
             } else {
               // Replace only matching parts
               newValue = cellValue.replace(regex, replaceValue);
@@ -367,7 +396,7 @@ const FindReplacePanel = ({
               (caseSensitive ? cellValue === findValue : cellValue.toLowerCase() === findValue.toLowerCase())) {
             // Replace whole cell if it matches completely
             newValue = replaceValue;
-          } else {
+          } else if (!matchWholeCell) {
             // Replace only matching parts using case sensitivity
             if (caseSensitive) {
               newValue = cellValue.split(findValue).join(replaceValue);
@@ -397,6 +426,8 @@ const FindReplacePanel = ({
               
               newValue = result;
             }
+          } else {
+            newValue = cellValue;
           }
         }
         
@@ -404,6 +435,7 @@ const FindReplacePanel = ({
         if (newValue !== cellValue) {
           newData[rowIndex][colIndex] = newValue;
           replaceCount++;
+          replacedCells.push({ rowIndex, colIndex });
         }
       }
     }
@@ -415,9 +447,25 @@ const FindReplacePanel = ({
       // Update stats
       setStats({ ...stats, replaced: stats.replaced + replaceCount });
       
-      // Clear found cells and reset index
+      // Select all replaced cells to highlight them
+      onCellSelect(replacedCells);
+      
+      // If there are any replaced cells, highlight the last one for focus
+      if (replacedCells.length > 0) {
+        const lastReplaced = replacedCells[replacedCells.length - 1];
+        
+        // Notify about highlighting the last replaced cell
+        const event = new CustomEvent('highlightCell', { 
+          detail: { rowIndex: lastReplaced.rowIndex, colIndex: lastReplaced.colIndex }
+        });
+        document.dispatchEvent(event);
+      }
+      
+      // Reset for the next search
       setFoundCells([]);
       setCurrentMatchIndex(-1);
+    } else {
+      setError('No matches found to replace');
     }
   };
   
@@ -434,8 +482,11 @@ const FindReplacePanel = ({
               type="text"
               value={findValue}
               onChange={(e) => setFindValue(e.target.value)}
-              className="flex-1 p-2 border border-border rounded-l"
+              className="flex-1 p-2 border border-border rounded-l focus:outline-none focus:ring-2 focus:ring-primary/50"
               placeholder="Text to find..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleFind();
+              }}
             />
             <Button
               variant="primary"
@@ -455,8 +506,11 @@ const FindReplacePanel = ({
               type="text"
               value={replaceValue}
               onChange={(e) => setReplaceValue(e.target.value)}
-              className="flex-1 p-2 border border-border rounded-l"
+              className="flex-1 p-2 border border-border rounded-l focus:outline-none focus:ring-2 focus:ring-primary/50"
               placeholder="Replacement text..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && foundCells.length > 0) handleReplace();
+              }}
             />
             <div className="flex">
               <Button
