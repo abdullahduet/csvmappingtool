@@ -230,13 +230,13 @@ const FindReplacePanel = ({
     
     // Then notify the table component to highlight and focus the cell
     // This uses a custom event to communicate with the parent component
-    const event = new CustomEvent('highlightCell', { 
+    const event = new CustomEvent('highlightAndScrollToCell', { 
       detail: { rowIndex: cell.rowIndex, colIndex: cell.colIndex }
     });
     
     document.dispatchEvent(event);
   };
-  
+
   // Replace current match
   const handleReplace = () => {
     if (foundCells.length === 0 || currentMatchIndex === -1) {

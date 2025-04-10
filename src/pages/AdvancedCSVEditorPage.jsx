@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import SEOHead from '../components/common/SEOHead';
 import EditableCSVTable from '../components/csv/EditableCSVTable';
 import CSVDataImporter from '../components/csv/CSVDataImporter';
 import CSVOperationsToolbar from '../components/csv/CSVOperationsToolbar';
 import FindReplacePanel from '../components/csv/FindReplacePanel';
 import Button from '../components/common/Button';
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 
 const AdvancedCSVEditorPage = () => {
   // State for CSV data
@@ -69,14 +69,42 @@ const AdvancedCSVEditorPage = () => {
   }, []);
   
   // Handle cell selection
+  // Update the handleCellSelect function for better debugging and performance
   const handleCellSelect = useCallback((cells) => {
+    console.log("Selection requested:", cells.length, "cells");
+    
+    // If selecting the same single cell that's already selected, clear selection
+    if (cells.length === 1 && selectedCells.length === 1) {
+      const newCell = cells[0];
+      const existingCell = selectedCells[0];
+      
+      if (newCell.rowIndex === existingCell.rowIndex && 
+          newCell.colIndex === existingCell.colIndex) {
+        console.log("Toggling off single cell selection");
+        setSelectedCells([]);
+        setHighlightedCell(null);
+        return;
+      }
+    }
+    
     setSelectedCells(cells);
     
     // If a single cell is selected, also set it as the highlighted cell
     if (cells.length === 1) {
       setHighlightedCell(cells[0]);
+    } else if (cells.length > 1) {
+      // With multiple cells selected, maintain the last highlighted cell if it's part of the selection
+      const isCurrentHighlightInSelection = cells.some(
+        cell => highlightedCell && 
+               cell.rowIndex === highlightedCell.rowIndex && 
+               cell.colIndex === highlightedCell.colIndex
+      );
+      if (!isCurrentHighlightInSelection) {
+        // If current highlight not in selection, highlight the first cell of the selection
+        setHighlightedCell(cells[0]);
+      }
     }
-  }, []);
+  }, [selectedCells, highlightedCell]);
   
   // Handle export
   const handleExport = () => {
@@ -295,6 +323,7 @@ const AdvancedCSVEditorPage = () => {
               selectedCells={selectedCells}
               onCellSelect={handleCellSelect}
               highlightedCell={highlightedCell}
+              setHighlightedCell={setHighlightedCell}
             />
           </div>
           
