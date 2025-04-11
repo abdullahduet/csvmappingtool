@@ -24,6 +24,10 @@ const EditableCSVTable = ({
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState(null);
   const [lastSelectedCell, setLastSelectedCell] = useState(null);
+  const [selectedRows, setSelectedRows] = useState([]);
+const [lastSelectedRow, setLastSelectedRow] = useState(null);
+const [selectedColumns, setSelectedColumns] = useState([]);
+const [lastSelectedColumn, setLastSelectedColumn] = useState(null);
   
   const tableRef = useRef(null);
   const tableBodyRef = useRef(null);
@@ -71,6 +75,39 @@ const EditableCSVTable = ({
   //     }
   //   });
   // }, [selectedCells]);
+
+  // Add this effect to synchronize cell selection with row/column selection
+useEffect(() => {
+  if (selectedCells.length > 0) {
+    // Extract unique row and column indices from cell selection
+    const rows = [...new Set(selectedCells.map(cell => cell.rowIndex))];
+    const cols = [...new Set(selectedCells.map(cell => cell.colIndex))];
+    
+    // Detect if entire rows or columns are selected
+    const completeRows = rows.filter(rowIndex => {
+      // Check if all cells in this row are selected
+      return selectedCells.filter(cell => cell.rowIndex === rowIndex).length === headers.length;
+    });
+    
+    const completeColumns = cols.filter(colIndex => {
+      // Check if all cells in this column are selected
+      return selectedCells.filter(cell => cell.colIndex === colIndex).length === data.length;
+    });
+    
+    // Update row and column selections if they've changed
+    if (JSON.stringify(completeRows.sort()) !== JSON.stringify(selectedRows.sort())) {
+      setSelectedRows(completeRows);
+    }
+    
+    if (JSON.stringify(completeColumns.sort()) !== JSON.stringify(selectedColumns.sort())) {
+      setSelectedColumns(completeColumns);
+    }
+  } else {
+    // Clear row and column selections if cell selection is cleared
+    if (selectedRows.length > 0) setSelectedRows([]);
+    if (selectedColumns.length > 0) setSelectedColumns([]);
+  }
+}, [selectedCells, headers.length, data.length]);
 
   useEffect(() => {
     // Listen for custom events from FindReplacePanel
@@ -426,36 +463,126 @@ const EditableCSVTable = ({
   };
   
   // Handle header click
-  const handleHeaderClick = (index, e) => {
-    // Prevent default selection behavior
-    e.preventDefault();
+  // const handleHeaderClick = (index, e) => {
+  //   // Prevent default selection behavior
+  //   e.preventDefault();
     
-    if (e.detail === 2) {
-      startEditingHeader(index);
-    } else {
-      // Select entire column
-      const columnCells = [];
-      for (let r = 0; r < data.length; r++) {
-        columnCells.push({ rowIndex: r, colIndex: index });
-      }
-      onCellSelect(columnCells);
-      setLastSelectedCell({ rowIndex: 0, colIndex: index });
-    }
-  };
+  //   if (e.detail === 2) {
+  //     startEditingHeader(index);
+  //   } else {
+  //     // Select entire column
+  //     const columnCells = [];
+  //     for (let r = 0; r < data.length; r++) {
+  //       columnCells.push({ rowIndex: r, colIndex: index });
+  //     }
+  //     onCellSelect(columnCells);
+  //     setLastSelectedCell({ rowIndex: 0, colIndex: index });
+  //   }
+  // };
   
   // Handle row selection by clicking row header
   const handleRowClick = (rowIndex, e) => {
     // Prevent default selection behavior
     e.preventDefault();
     
-    // Select entire row
-    const rowCells = [];
-    for (let c = 0; c < headers.length; c++) {
-      rowCells.push({ rowIndex, colIndex: c });
+    // Handle multi-select with modifier keys
+  if (e.ctrlKey || e.metaKey) {
+    // Toggle this row in selection (add if not present, remove if present)
+    if (selectedRows.includes(rowIndex)) {
+      setSelectedRows(selectedRows.filter(index => index !== rowIndex));
+    } else {
+      setSelectedRows([...selectedRows, rowIndex]);
     }
-    onCellSelect(rowCells);
-    setLastSelectedCell({ rowIndex, colIndex: 0 });
+    setLastSelectedRow(rowIndex);
+  } else if (e.shiftKey && lastSelectedRow !== null) {
+    // Range selection from last selected row to current row
+    const start = Math.min(lastSelectedRow, rowIndex);
+    const end = Math.max(lastSelectedRow, rowIndex);
+    
+    // Create array of all row indices in the range
+    const rangeSelection = Array.from(
+      { length: end - start + 1 }, 
+      (_, i) => start + i
+    );
+    
+    setSelectedRows(rangeSelection);
+  } else {
+    // Simple single row selection
+    setSelectedRows([rowIndex]);
+    setLastSelectedRow(rowIndex);
+  }
+
+  // Convert row selection to cell selection for the table
+  const cellSelection = [];
+  const rowIndices = e.shiftKey && lastSelectedRow !== null 
+    ? Array.from(
+        { length: Math.abs(rowIndex - lastSelectedRow) + 1 }, 
+        (_, i) => Math.min(rowIndex, lastSelectedRow) + i
+      ) 
+    : [rowIndex];
+  
+  // For each selected row, add all cells in that row to the selection
+  rowIndices.forEach(row => {
+    for (let col = 0; col < headers.length; col++) {
+      cellSelection.push({ rowIndex: row, colIndex: col });
+    }
+  });
+  
+  onCellSelect(cellSelection);
   };
+
+  // Column selection handler
+const handleColumnHeaderClick = (colIndex, e) => {
+  // Prevent default browser selection behavior
+  e.preventDefault();
+  
+  // Handle multi-select with modifier keys
+  if (e.detail === 2) {
+    startEditingHeader(index);
+  } else if (e.ctrlKey || e.metaKey) {
+    // Toggle this column in selection
+    if (selectedColumns.includes(colIndex)) {
+      setSelectedColumns(selectedColumns.filter(index => index !== colIndex));
+    } else {
+      setSelectedColumns([...selectedColumns, colIndex]);
+    }
+    setLastSelectedColumn(colIndex);
+  } else if (e.shiftKey && lastSelectedColumn !== null) {
+    // Range selection from last selected column to current column
+    const start = Math.min(lastSelectedColumn, colIndex);
+    const end = Math.max(lastSelectedColumn, colIndex);
+    
+    // Create array of all column indices in the range
+    const rangeSelection = Array.from(
+      { length: end - start + 1 }, 
+      (_, i) => start + i
+    );
+    
+    setSelectedColumns(rangeSelection);
+  } else {
+    // Simple single column selection
+    setSelectedColumns([colIndex]);
+    setLastSelectedColumn(colIndex);
+  }
+  
+  // Convert column selection to cell selection for the table
+  const cellSelection = [];
+  const colIndices = e.shiftKey && lastSelectedColumn !== null 
+    ? Array.from(
+        { length: Math.abs(colIndex - lastSelectedColumn) + 1 }, 
+        (_, i) => Math.min(colIndex, lastSelectedColumn) + i
+      ) 
+    : [colIndex];
+  
+  // For each selected column, add all cells in that column to the selection
+  colIndices.forEach(col => {
+    for (let row = 0; row < data.length; row++) {
+      cellSelection.push({ rowIndex: row, colIndex: col });
+    }
+  });
+  
+  onCellSelect(cellSelection);
+};
   
   // Handle select all table by clicking top-left '#' cell
   const handleSelectAllClick = (e) => {
@@ -750,14 +877,28 @@ const EditableCSVTable = ({
     
     for (let rowIndex = visibleRowsRange.start; rowIndex < visibleRowsRange.end && rowIndex < data.length; rowIndex++) {
       rows.push(
-        <tr key={rowIndex} className="divide-x divide-border">
+        <tr
+        key={rowIndex} 
+        className={`divide-x divide-border ${
+          selectedRows.includes(rowIndex) ? 'bg-primary/5' : 
+          (rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50')
+        }`}
+        >
           {/* Row header */}
-          <td 
-            className="w-12 px-2 py-1 whitespace-nowrap text-sm font-medium text-text-900 bg-accent/30 cursor-pointer hover:bg-accent-200 sticky left-0 z-10 select-none"
+          <td
+            // onMouseDown={(e) => {
+            //   e.preventDefault(); // Prevent text selection
+            //   handleRowClick(rowIndex, e);
+            // }}
+            className={`w-12 px-2 py-1 whitespace-nowrap text-sm font-medium text-text-900 
+              bg-accent/30 cursor-pointer hover:bg-accent-200 sticky left-0 z-10 select-none
+              ${selectedRows.includes(rowIndex) ? 'bg-primary/20 font-semibold' : ''}
+            `}
             onClick={(e) => handleRowClick(rowIndex, e)}
             onMouseDown={(e) => {
-              e.preventDefault(); // Prevent text selection
-              handleRowClick(rowIndex, e);
+              if (e.button !== 2) { // Not right click
+                e.preventDefault(); // Prevent text selection
+              }
             }}
           >
             {rowIndex + 1}
@@ -857,11 +998,20 @@ const EditableCSVTable = ({
                 {headers.map((header, index) => (
                   <th
                     key={index}
-                    className="px-2 py-2 text-left text-xs font-medium text-text-900 uppercase tracking-wider border-r border-border min-w-[120px] cursor-pointer hover:bg-accent-200 select-none"
-                    onClick={(e) => handleHeaderClick(index, e)}
+                    className={`px-2 py-2 text-left text-xs font-medium text-text-900 uppercase 
+                      tracking-wider border-r border-border min-w-[120px] cursor-pointer 
+                      hover:bg-accent-200 select-none
+                      ${selectedColumns.includes(index) ? 'bg-primary/20 font-semibold' : ''}
+                    `}
+                    onClick={(e) => handleColumnHeaderClick(index, e)}
+                    // onMouseDown={(e) => {
+                    //   e.preventDefault(); // Prevent text selection
+                    //   handleColumnHeaderClick(index, e);
+                    // }}
                     onMouseDown={(e) => {
-                      e.preventDefault(); // Prevent text selection
-                      handleHeaderClick(index, e);
+                      if (e.button !== 2) { // Not right click
+                        e.preventDefault(); // Prevent text selection
+                      }
                     }}
                   >
                     {renderHeader(index)}
