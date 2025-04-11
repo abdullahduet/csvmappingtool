@@ -10,7 +10,8 @@ const EditableCSVTable = ({
   selectedCells = [],
   onCellSelect,
   maxHeight = '600px',
-  highlightedCell = null
+  highlightedCell = null,
+  setHighlightedCell
 }) => {
   const [editingCell, setEditingCell] = useState(null);
   const [editingHeader, setEditingHeader] = useState(null);
@@ -40,19 +41,87 @@ const EditableCSVTable = ({
     const scrollTop = tableBodyRef.current.scrollTop;
     const viewportHeight = tableBodyRef.current.clientHeight;
     
+    // Increase buffer size for smoother scrolling
     const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROWS_BUFFER);
     const endRow = Math.min(
       data.length,
       Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROWS_BUFFER
     );
     
-    setVisibleRowsRange({ start: startRow, end: endRow });
-  }, [data.length]);
+    // Only update if the visible range has actually changed
+    if (startRow !== visibleRowsRange.start || endRow !== visibleRowsRange.end) {
+      setVisibleRowsRange({ start: startRow, end: endRow });
+    }
+  }, [data.length, visibleRowsRange]);
 
   // Debug function to log selection changes
+  // useEffect(() => {
+  //   // Force re-render when selection changes
+  //   const cellElements = document.querySelectorAll('[data-row-index][data-col-index]');
+  //   console.log('[EditableCSVTable] cellElements: ', cellElements.length);
+  //   console.log('[EditableCSVTable] selectedCells: ', selectedCells.length);
+  //   cellElements.forEach(element => {
+  //     const rowIndex = parseInt(element.getAttribute('data-row-index'));
+  //     const colIndex = parseInt(element.getAttribute('data-col-index'));
+      
+  //     if (isCellSelected(rowIndex, colIndex)) {
+  //       element.classList.add('bg-primary/10');
+  //     } else {
+  //       element.classList.remove('bg-primary/10');
+  //     }
+  //   });
+  // }, [selectedCells]);
+
   useEffect(() => {
-    console.log("Selected cells updated:", selectedCells.length);
-  }, [selectedCells]);
+    // Listen for custom events from FindReplacePanel
+    const handleHighlightAndScroll = (event) => {
+      const { rowIndex, colIndex } = event.detail;
+      
+      // Set highlighted cell state
+      setHighlightedCell({ rowIndex, colIndex });
+      
+      // Scroll to the cell with a slight delay to ensure DOM update
+      setTimeout(() => {
+        const cellKey = `cell-${rowIndex}-${colIndex}`;
+        const cellElement = cellRefs.current[cellKey];
+        
+        if (cellElement && tableBodyRef.current) {
+          // First ensure the row is within the visible range
+          const currentVisibleStart = visibleRowsRange.start;
+          const currentVisibleEnd = visibleRowsRange.end;
+          
+          if (rowIndex < currentVisibleStart || rowIndex >= currentVisibleEnd) {
+            // Update visible rows range if cell is outside current view
+            const newStart = Math.max(0, rowIndex - Math.floor(ROWS_BUFFER/2));
+            setVisibleRowsRange({ 
+              start: newStart, 
+              end: Math.min(data.length, newStart + ROWS_BUFFER * 2) 
+            });
+          }
+          
+          // Explicitly scroll to make cell visible with behavior smooth
+          cellElement.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'center'
+          });
+          
+          // Add a temporary highlight effect
+          cellElement.classList.add('animate-pulse');
+          setTimeout(() => {
+            cellElement.classList.remove('animate-pulse');
+          }, 1000);
+        }
+      }, 50);
+    };
+    
+    // Register event listener
+    document.addEventListener('highlightAndScrollToCell', handleHighlightAndScroll);
+    
+    return () => {
+      document.removeEventListener('highlightAndScrollToCell', handleHighlightAndScroll);
+    };
+  }, [data.length, visibleRowsRange]);
   
   // Focus input when editing starts
   useEffect(() => {
@@ -706,7 +775,7 @@ const EditableCSVTable = ({
                 data-row-index={rowIndex}
                 data-col-index={colIndex}
                 className={`whitespace-nowrap text-sm text-text-900 border-r border-border relative min-w-[120px] cursor-cell ${
-                  isSelected ? 'bg-primary/10' : ''
+                  isSelected ? 'bg-primary/10 bg-secondary/20 outline outline-2 outline-secondary' : ''
                 } ${
                   isHighlighted ? 'bg-secondary/20 outline outline-2 outline-secondary' : ''
                 }`}
