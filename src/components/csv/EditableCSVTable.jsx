@@ -484,14 +484,17 @@ useEffect(() => {
   const handleRowClick = (rowIndex, e) => {
     // Prevent default selection behavior
     e.preventDefault();
+    let newSelectedRows;
     
     // Handle multi-select with modifier keys
   if (e.ctrlKey || e.metaKey) {
     // Toggle this row in selection (add if not present, remove if present)
     if (selectedRows.includes(rowIndex)) {
-      setSelectedRows(selectedRows.filter(index => index !== rowIndex));
+      newSelectedRows = selectedRows.filter(index => index !== rowIndex);
+      // setSelectedRows(selectedRows.filter(index => index !== rowIndex));
     } else {
-      setSelectedRows([...selectedRows, rowIndex]);
+      newSelectedRows = [...selectedRows, rowIndex];
+      // setSelectedRows([...selectedRows, rowIndex]);
     }
     setLastSelectedRow(rowIndex);
   } else if (e.shiftKey && lastSelectedRow !== null) {
@@ -500,29 +503,31 @@ useEffect(() => {
     const end = Math.max(lastSelectedRow, rowIndex);
     
     // Create array of all row indices in the range
-    const rangeSelection = Array.from(
+    newSelectedRows = Array.from(
       { length: end - start + 1 }, 
       (_, i) => start + i
     );
     
-    setSelectedRows(rangeSelection);
+    // setSelectedRows(rangeSelection);
   } else {
+    newSelectedRows = [rowIndex];
     // Simple single row selection
-    setSelectedRows([rowIndex]);
+    // setSelectedRows([rowIndex]);
     setLastSelectedRow(rowIndex);
   }
 
+  setSelectedRows(newSelectedRows);
   // Convert row selection to cell selection for the table
   const cellSelection = [];
-  const rowIndices = e.shiftKey && lastSelectedRow !== null 
-    ? Array.from(
-        { length: Math.abs(rowIndex - lastSelectedRow) + 1 }, 
-        (_, i) => Math.min(rowIndex, lastSelectedRow) + i
-      ) 
-    : [rowIndex];
+  // const rowIndices = e.shiftKey && lastSelectedRow !== null 
+  //   ? Array.from(
+  //       { length: Math.abs(rowIndex - lastSelectedRow) + 1 }, 
+  //       (_, i) => Math.min(rowIndex, lastSelectedRow) + i
+  //     ) 
+  //   : [rowIndex];
   
   // For each selected row, add all cells in that row to the selection
-  rowIndices.forEach(row => {
+  newSelectedRows.forEach(row => {
     for (let col = 0; col < headers.length; col++) {
       cellSelection.push({ rowIndex: row, colIndex: col });
     }
@@ -537,14 +542,17 @@ const handleColumnHeaderClick = (colIndex, e) => {
   e.preventDefault();
   
   // Handle multi-select with modifier keys
+  let newSelectedColumns;
   if (e.detail === 2) {
     startEditingHeader(index);
   } else if (e.ctrlKey || e.metaKey) {
     // Toggle this column in selection
     if (selectedColumns.includes(colIndex)) {
-      setSelectedColumns(selectedColumns.filter(index => index !== colIndex));
+      newSelectedColumns = selectedColumns.filter(index => index !== colIndex);
+      // setSelectedColumns(selectedColumns.filter(index => index !== colIndex));
     } else {
-      setSelectedColumns([...selectedColumns, colIndex]);
+      newSelectedColumns = [...selectedColumns, colIndex];
+      // setSelectedColumns([...selectedColumns, colIndex]);
     }
     setLastSelectedColumn(colIndex);
   } else if (e.shiftKey && lastSelectedColumn !== null) {
@@ -553,29 +561,31 @@ const handleColumnHeaderClick = (colIndex, e) => {
     const end = Math.max(lastSelectedColumn, colIndex);
     
     // Create array of all column indices in the range
-    const rangeSelection = Array.from(
+    newSelectedColumns = Array.from(
       { length: end - start + 1 }, 
       (_, i) => start + i
     );
     
-    setSelectedColumns(rangeSelection);
+    // setSelectedColumns(rangeSelection);
   } else {
     // Simple single column selection
-    setSelectedColumns([colIndex]);
+    newSelectedColumns = [colIndex];
+    // setSelectedColumns([colIndex]);
     setLastSelectedColumn(colIndex);
   }
+  setSelectedColumns(newSelectedColumns);
   
   // Convert column selection to cell selection for the table
   const cellSelection = [];
-  const colIndices = e.shiftKey && lastSelectedColumn !== null 
-    ? Array.from(
-        { length: Math.abs(colIndex - lastSelectedColumn) + 1 }, 
-        (_, i) => Math.min(colIndex, lastSelectedColumn) + i
-      ) 
-    : [colIndex];
+  // const colIndices = e.shiftKey && lastSelectedColumn !== null 
+  //   ? Array.from(
+  //       { length: Math.abs(colIndex - lastSelectedColumn) + 1 }, 
+  //       (_, i) => Math.min(colIndex, lastSelectedColumn) + i
+  //     ) 
+  //   : [colIndex];
   
   // For each selected column, add all cells in that column to the selection
-  colIndices.forEach(col => {
+  newSelectedColumns.forEach(col => {
     for (let row = 0; row < data.length; row++) {
       cellSelection.push({ rowIndex: row, colIndex: col });
     }
